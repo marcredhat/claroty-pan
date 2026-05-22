@@ -1,0 +1,90 @@
+{
+  "duration": "24h",
+  "description": "OT \u2014 Crown-jewel / safety-PLC heatmap (Claroty xDome SRA pattern). Surfaces SIL-3 blast-furnace zone assets, SRA sessions on crown jewels, and risk concentration per zone\u00d7criticality and zone\u00d7SIL-level. References IEC 61511 SIL-3 classification; MITRE ATT&CK for ICS T0822/T0866.",
+  "graphs": [
+    {
+      "title": "SIL-3 assets (total)",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"sil_level\": \"$sil_level{regex=[^\"]+}$\"' from message\n| parse '\"asset_id\": \"$asset_id{regex=[^\"]+}$\"' from message\n| filter sil_level == \"SIL-3\" or sil_level == \"SIL3\"\n| group n = dcount(asset_id)",
+      "layout": {"w": 15, "h": 6, "x": 0, "y": 0}
+    },
+    {
+      "title": "SIL-3 assets with open vulns",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"sil_level\": \"$sil_level{regex=[^\"]+}$\"' from message\n| parse '\"vuln_count\": $vuln_count{regex=[0-9]+}$' from message\n| parse '\"asset_id\": \"$asset_id{regex=[^\"]+}$\"' from message\n| filter sil_level == \"SIL-3\" or sil_level == \"SIL3\"\n| filter vuln_count > 0\n| group n = dcount(asset_id)",
+      "layout": {"w": 15, "h": 6, "x": 15, "y": 0}
+    },
+    {
+      "title": "SRA sessions to crown jewels (24h)",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"criticality\": \"$criticality{regex=[^\"]+}$\"' from message\n| parse '\"sra_session_id\": \"$sra_session_id{regex=[^\"]+}$\"' from message\n| filter criticality == \"CROWN_JEWEL\" or criticality == \"CRITICAL\"\n| group n = dcount(sra_session_id)",
+      "layout": {"w": 15, "h": 6, "x": 30, "y": 0}
+    },
+    {
+      "title": "Assets with risk score >= 80",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"risk_score\": $risk_score{regex=[0-9]+}$' from message\n| parse '\"asset_id\": \"$asset_id{regex=[^\"]+}$\"' from message\n| filter risk_score >= 80\n| group n = dcount(asset_id)",
+      "layout": {"w": 15, "h": 6, "x": 45, "y": 0}
+    },
+    {
+      "title": "Heatmap \u2014 assets per zone \u00d7 criticality",
+      "graphStyle": "stackedBar",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"criticality\": \"$criticality{regex=[^\"]+}$\"' from message\n| parse '\"asset_id\": \"$asset_id{regex=[^\"]+}$\"' from message\n| group asset_n = dcount(asset_id) by zone, criticality\n| filter zone = *\n| filter criticality = *\n| sort - asset_n",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 6}
+    },
+    {
+      "title": "Heatmap \u2014 assets per zone \u00d7 SIL level",
+      "graphStyle": "stackedBar",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"sil_level\": \"$sil_level{regex=[^\"]+}$\"' from message\n| parse '\"asset_id\": \"$asset_id{regex=[^\"]+}$\"' from message\n| group asset_n = dcount(asset_id) by zone, sil_level\n| filter zone = *\n| filter sil_level = *\n| sort - asset_n",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 6}
+    },
+    {
+      "title": "Top 20 crown jewels by risk score",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"sil_level\": \"$sil_level{regex=[^\"]+}$\"' from message\n| parse '\"criticality\": \"$criticality{regex=[^\"]+}$\"' from message\n| parse '\"risk_score\": $risk_score{regex=[0-9]+}$' from message\n| parse '\"vuln_count\": $vuln_count{regex=[0-9]+}$' from message\n| parse '\"business_impact\": \"$business_impact{regex=[^\"]+}$\"' from message\n| filter criticality == \"CROWN_JEWEL\" or criticality == \"CRITICAL\"\n| group max_risk = max(risk_score), max_vulns = max(vuln_count) by asset_name, zone, sil_level, criticality, business_impact\n| filter asset_name = *\n| sort - max_risk, - max_vulns\n| limit 20",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 20}
+    },
+    {
+      "title": "SIL-3 BLAST_FURNACE zone \u2014 asset inventory",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"sil_level\": \"$sil_level{regex=[^\"]+}$\"' from message\n| parse '\"vendor\": \"$vendor{regex=[^\"]+}$\"' from message\n| parse '\"risk_score\": $risk_score{regex=[0-9]+}$' from message\n| parse '\"vuln_count\": $vuln_count{regex=[0-9]+}$' from message\n| filter zone == \"BLAST_FURNACE\"\n| filter sil_level == \"SIL-3\" or sil_level == \"SIL3\"\n| group risk = max(risk_score), vulns = max(vuln_count) by asset_name, zone, sil_level, vendor\n| filter asset_name = *\n| sort - risk, - vulns",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 20}
+    },
+    {
+      "title": "Vuln severity per crown-jewel asset",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"criticality\": \"$criticality{regex=[^\"]+}$\"' from message\n| parse '\"vuln_severity\": \"$vuln_severity{regex=[^\"]+}$\"' from message\n| filter criticality == \"CROWN_JEWEL\" or criticality == \"CRITICAL\"\n| group\n    crit_v = count( vuln_severity == \"CRITICAL\" ),\n    high_v = count( vuln_severity == \"HIGH\" ),\n    med_v  = count( vuln_severity == \"MEDIUM\" ),\n    low_v  = count( vuln_severity == \"LOW\" )\n  by asset_name\n| filter asset_name = *\n| sort - crit_v, - high_v\n| limit 30",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 34}
+    },
+    {
+      "title": "SRA sessions per user \u2192 crown jewels",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"sra_user\": \"$sra_user{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"criticality\": \"$criticality{regex=[^\"]+}$\"' from message\n| parse '\"sra_session_id\": \"$sra_session_id{regex=[^\"]+}$\"' from message\n| parse '\"sra_duration_sec\": $sra_duration_sec{regex=[0-9]+}$' from message\n| filter criticality == \"CROWN_JEWEL\" or criticality == \"CRITICAL\"\n| group sessions = dcount(sra_session_id), assets = dcount(asset_name), total_sec = sum(sra_duration_sec) by sra_user\n| filter sra_user = *\n| sort - sessions, - total_sec\n| limit 20",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 34}
+    },
+    {
+      "title": "Long SRA sessions on SIL-3 assets (> 1h)",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"sra_user\": \"$sra_user{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"sil_level\": \"$sil_level{regex=[^\"]+}$\"' from message\n| parse '\"sra_session_id\": \"$sra_session_id{regex=[^\"]+}$\"' from message\n| parse '\"sra_duration_sec\": $sra_duration_sec{regex=[0-9]+}$' from message\n| filter sil_level == \"SIL-3\" or sil_level == \"SIL3\"\n| filter sra_duration_sec > 3600\n| group max_sec = max(sra_duration_sec) by sra_session_id, sra_user, asset_name, zone\n| filter sra_session_id = *\n| sort - max_sec\n| limit 30",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 48}
+    },
+    {
+      "title": "SRA session activity by hour (count + total duration)",
+      "graphStyle": "line",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"sra_session_id\": \"$sra_session_id{regex=[^\"]+}$\"' from message\n| parse '\"sra_duration_sec\": $sra_duration_sec{regex=[0-9]+}$' from message\n| parse '\"criticality\": \"$criticality{regex=[^\"]+}$\"' from message\n| filter criticality == \"CROWN_JEWEL\" or criticality == \"CRITICAL\"\n| group sessions = dcount(sra_session_id), total_sec = sum(sra_duration_sec) by hour = timebucket('1 hour')\n| sort hour",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 48}
+    },
+    {
+      "title": "Risk-score distribution by zone",
+      "graphStyle": "stackedBar",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"risk_score\": $risk_score{regex=[0-9]+}$' from message\n| parse '\"asset_id\": \"$asset_id{regex=[^\"]+}$\"' from message\n| group\n    risk_critical = dcount( risk_score >= 90 ? asset_id : null ),\n    risk_high     = dcount( risk_score >= 70 and risk_score < 90 ? asset_id : null ),\n    risk_medium   = dcount( risk_score >= 40 and risk_score < 70 ? asset_id : null ),\n    risk_low      = dcount( risk_score < 40 ? asset_id : null )\n  by zone\n| filter zone = *\n| sort - risk_critical, - risk_high",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 62}
+    },
+    {
+      "title": "Crown-jewel assets without telemetry in 24h",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'claroty' )\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"sil_level\": \"$sil_level{regex=[^\"]+}$\"' from message\n| parse '\"criticality\": \"$criticality{regex=[^\"]+}$\"' from message\n| parse '\"last_seen\": \"$last_seen{regex=[^\"]+}$\"' from message\n| filter criticality == \"CROWN_JEWEL\" or criticality == \"CRITICAL\"\n| group events = count(), last = max(timestamp) by asset_name, zone, sil_level, last_seen\n| filter events = 0\n| sort asset_name\n| limit 30",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 62}
+    }
+  ]
+}

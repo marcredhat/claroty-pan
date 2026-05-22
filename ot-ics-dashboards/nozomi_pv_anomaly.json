@@ -1,0 +1,96 @@
+{
+  "duration": "24h",
+  "description": "OT \u2014 Nozomi process-variable anomaly cross-correlation. Detects the ANSSI 2014 German steel-mill pattern: HMI/EWS pivot \u2192 unauthorized PLC writes (Modbus FC 5/6/15/16, WRITE_VAR) \u2192 PV deviations across SAFETY/BLAST_FURNACE zone \u2192 blocked shutdown. Cross-correlates write activity with PV-anomaly alerts per minute per asset. MITRE ATT&CK for ICS T0836/T0855/T0858/T0831.",
+  "graphs": [
+    {
+      "title": "PV anomaly alerts (24h)",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| group n = count( alert_type == \"PROCESS_VARIABLE_ANOMALY\" )",
+      "layout": {"w": 15, "h": 6, "x": 0, "y": 0}
+    },
+    {
+      "title": "Unauthorized PLC writes (24h)",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n| group n = count( function_code == \"5\" or function_code == \"6\" or function_code == \"15\" or function_code == \"16\" or function_code == \"WRITE_VAR\" )",
+      "layout": {"w": 15, "h": 6, "x": 15, "y": 0}
+    },
+    {
+      "title": "Safety-zone protocol violations (24h)",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| group n = count( zone == \"SAFETY\" and alert_type == \"PROTOCOL_VIOLATION\" )",
+      "layout": {"w": 15, "h": 6, "x": 30, "y": 0}
+    },
+    {
+      "title": "New protocols / function codes (24h)",
+      "graphStyle": "number",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| group n = count( alert_type == \"NEW_PROTOCOL\" or alert_type == \"NEW_FUNCTION_CODE\" )",
+      "layout": {"w": 15, "h": 6, "x": 45, "y": 0}
+    },
+    {
+      "title": "PV anomalies by zone (hourly)",
+      "graphStyle": "line",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| group anomalies = count( alert_type == \"PROCESS_VARIABLE_ANOMALY\" ) by hour = timebucket('1 hour'), zone\n| filter zone = *\n| sort hour",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 6}
+    },
+    {
+      "title": "PLC writes vs PV anomalies (hourly) \u2014 co-occurrence",
+      "graphStyle": "line",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n| group\n    writes    = count( function_code == \"5\" or function_code == \"6\" or function_code == \"15\" or function_code == \"16\" or function_code == \"WRITE_VAR\" ),\n    anomalies = count( alert_type == \"PROCESS_VARIABLE_ANOMALY\" )\n  by hour = timebucket('1 hour')\n| sort hour",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 6}
+    },
+    {
+      "title": "Top assets by PV anomaly count",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| group anomalies = count( alert_type == \"PROCESS_VARIABLE_ANOMALY\" ) by asset_name, zone\n| filter asset_name = *\n| sort - anomalies\n| limit 20",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 20}
+    },
+    {
+      "title": "Top deviating process variables",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"process_variable\": \"$process_variable{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| group anomalies = count( alert_type == \"PROCESS_VARIABLE_ANOMALY\" ) by process_variable, asset_name\n| filter process_variable = *\n| sort - anomalies\n| limit 20",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 20}
+    },
+    {
+      "title": "HMI/EWS writes correlated with PV anomalies (same minute, same asset)",
+      "graphStyle": "table",
+      "query": "| inner join\n  writes = (\n    filter( dataset == 'nozomi' )\n    | parse '\"role\": \"$role{regex=[^\"]+}$\"' from message\n    | parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n    | parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n    | filter role == \"HMI\" or role == \"EWS\"\n    | filter function_code == \"5\" or function_code == \"6\" or function_code == \"15\" or function_code == \"16\" or function_code == \"WRITE_VAR\"\n    | group writes_n = count() by min = timebucket('1 minute'), asset_name\n  ),\n  anom = (\n    filter( dataset == 'nozomi' )\n    | parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n    | parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n    | filter alert_type == \"PROCESS_VARIABLE_ANOMALY\"\n    | group anom_n = count() by min = timebucket('1 minute'), asset_name\n  )\n  on min, asset_name\n| group total_writes = sum(writes_n), total_anom = sum(anom_n), corr_minutes = count() by asset_name\n| sort - corr_minutes, - total_anom\n| limit 20",
+      "layout": {"w": 60, "h": 16, "x": 0, "y": 34}
+    },
+    {
+      "title": "Writes targeting SAFETY zone",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"src_ip\": \"$src_ip{regex=[^\"]+}$\"' from message\n| filter zone == \"SAFETY\"\n| filter function_code == \"5\" or function_code == \"6\" or function_code == \"15\" or function_code == \"16\" or function_code == \"WRITE_VAR\" or function_code == \"STOP_PLC\" or function_code == \"FORCE_OUTPUT\"\n| group writes = count() by asset_name, src_ip, function_code\n| filter asset_name = *\n| sort - writes\n| limit 30",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 50}
+    },
+    {
+      "title": "Programming / firmware download attempts",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"src_ip\": \"$src_ip{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| filter alert_type == \"PLC_PROGRAM_UPLOAD\" or alert_type == \"PLC_PROGRAM_DOWNLOAD\" or alert_type == \"FIRMWARE_UPDATE\" or alert_type == \"CHANGE_OPERATING_MODE\"\n| group attempts = count() by asset_name, zone, src_ip, alert_type\n| filter asset_name = *\n| sort - attempts\n| limit 30",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 50}
+    },
+    {
+      "title": "Top source IPs writing to PLCs",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"src_ip\": \"$src_ip{regex=[^\"]+}$\"' from message\n| parse '\"dst_ip\": \"$dst_ip{regex=[^\"]+}$\"' from message\n| parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n| filter function_code == \"5\" or function_code == \"6\" or function_code == \"15\" or function_code == \"16\" or function_code == \"WRITE_VAR\"\n| group writes = count() by src_ip, dst_ip\n| filter src_ip = *\n| sort - writes\n| limit 20",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 64}
+    },
+    {
+      "title": "New protocols / function codes (baseline drift)",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"protocol\": \"$protocol{regex=[^\"]+}$\"' from message\n| parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| filter alert_type == \"NEW_PROTOCOL\" or alert_type == \"NEW_FUNCTION_CODE\"\n| group n = count() by asset_name, protocol, function_code\n| filter asset_name = *\n| sort - n\n| limit 20",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 64}
+    },
+    {
+      "title": "Largest PV deviations (top 30)",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"process_variable\": \"$process_variable{regex=[^\"]+}$\"' from message\n| parse '\"value\": $pv_value{regex=-?[0-9.]+}$' from message\n| parse '\"baseline\": $pv_baseline{regex=-?[0-9.]+}$' from message\n| parse '\"deviation\": $pv_deviation{regex=-?[0-9.]+}$' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| filter alert_type == \"PROCESS_VARIABLE_ANOMALY\"\n| group max_dev = max(pv_deviation), last_val = max(pv_value), last_base = max(pv_baseline) by asset_name, zone, process_variable\n| filter process_variable = *\n| sort - max_dev\n| limit 30",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 78}
+    },
+    {
+      "title": "Safety PLC stop/start commands",
+      "graphStyle": "table",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"src_ip\": \"$src_ip{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| filter alert_type == \"STOP_PLC\" or alert_type == \"START_PLC\" or alert_type == \"CHANGE_OPERATING_MODE\"\n| filter zone == \"SAFETY\" or zone == \"BLAST_FURNACE\"\n| group n = count() by asset_name, zone, src_ip, alert_type\n| filter asset_name = *\n| sort - n",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 78}
+    }
+  ]
+}
