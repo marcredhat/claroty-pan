@@ -1,0 +1,117 @@
+{
+  "description": "End-to-end pipeline: Claroty asset inventory -> AI SIEM lookup -> Palo Alto traffic/threat logs -> correlation -> alerts -> Hyperautomation tagging. Each row maps to one pipeline stage.",
+  "duration": "1d",
+  "parameters": [
+    {
+      "name": "plant",
+      "defaultValue": "*",
+      "values": [
+        {"label": "All plants",       "value": "*"},
+        {"label": "PLANT-A",          "value": "PLANT-A"},
+        {"label": "PLANT-B",          "value": "PLANT-B"}
+      ]
+    }
+  ],
+  "graphs": [
+    {
+      "title": "Pipeline Overview",
+      "graphStyle": "markdown",
+      "markdown": "## Claroty x Palo Alto OT Pipeline\n\n**Stage 1.** Claroty asset inventory ingested every cycle to `serverHost=claroty-inventory`.\n\n**Stage 2.** Inventory populates an AI SIEM lookup of `ip -> {hostname, device_type, criticality, claroty_risk, expected_edl, expected_dag, approved_policy_group, status}`.\n\n**Stage 3.** Palo Alto traffic / threat / IP-tag logs land at `serverHost=pan-library-trigger` (and pre-enriched at `pan-claroty-enriched`).\n\n**Stage 4.** Each PAN event is correlated with Claroty context; 5 drift flags are computed at ingest (`claroty_edl_drift_flag`, `claroty_dag_reclassified_flag`, `claroty_unmanaged_cross_zone_flag`, `claroty_highrisk_offzone_flag`, `claroty_decommissioned_active_flag`).\n\n**Stage 5.** Mismatches drive **5 Custom STAR rules** (Claroty drift) and the **7 PANW Library rules** (Library + Purple AI auto-investigation).\n\n**Stage 6.** Approved verdicts feed Hyperautomation workflow `Claroty/PANW Alert — Auto Investigation + Verdict-driven Response`, which updates the PAN EDL / DAG.",
+      "layout": {"w": 60, "h": 8, "x": 0, "y": 0}
+    },
+
+    {
+      "title": "Claroty assets in inventory",
+      "graphStyle": "number",
+      "query": "serverHost = 'claroty-inventory' ip = * | group estimate_distinct(ip) | limit 1",
+      "options": {"format": "auto", "precision": "0", "suffix": " assets"},
+      "layout": {"w": 12, "h": 7, "x": 0, "y": 8}
+    },
+    {
+      "title": "PAN events (24h)",
+      "graphStyle": "number",
+      "query": "dataSource.name = 'Palo Alto Networks Firewall' | group count() | limit 1",
+      "options": {"format": "auto", "precision": "0", "suffix": " events"},
+      "layout": {"w": 12, "h": 7, "x": 12, "y": 8}
+    },
+    {
+      "title": "Drift events (24h)",
+      "graphStyle": "number",
+      "query": "serverHost = 'pan-claroty-enriched' (claroty_edl_drift_flag = '1' or claroty_dag_reclassified_flag = '1' or claroty_unmanaged_cross_zone_flag = '1' or claroty_highrisk_offzone_flag = '1' or claroty_decommissioned_active_flag = '1') | group count() | limit 1",
+      "options": {"format": "auto", "precision": "0", "suffix": " hits"},
+      "layout": {"w": 12, "h": 7, "x": 24, "y": 8}
+    },
+    {
+      "title": "Distinct OT src IPs in drift",
+      "graphStyle": "number",
+      "query": "serverHost = 'pan-claroty-enriched' (claroty_edl_drift_flag = '1' or claroty_dag_reclassified_flag = '1' or claroty_unmanaged_cross_zone_flag = '1' or claroty_highrisk_offzone_flag = '1' or claroty_decommissioned_active_flag = '1') | group estimate_distinct(src.ip.address) | limit 1",
+      "options": {"format": "auto", "precision": "0", "suffix": " IPs"},
+      "layout": {"w": 12, "h": 7, "x": 36, "y": 8}
+    },
+    {
+      "title": "PANW Library trigger events",
+      "graphStyle": "number",
+      "query": "serverHost = 'pan-library-trigger' | group count() | limit 1",
+      "options": {"format": "auto", "precision": "0", "suffix": " events"},
+      "layout": {"w": 12, "h": 7, "x": 48, "y": 8}
+    },
+
+    {
+      "title": "Stage 1+2 - Claroty inventory ingest over time",
+      "graphStyle": "stacked_bar",
+      "xAxis": "time",
+      "query": "serverHost = 'claroty-inventory' claroty_site = $plant | group count() by timestamp=timebucket('1h'), claroty_site | transpose claroty_site on timestamp",
+      "layout": {"w": 30, "h": 14, "x": 0, "y": 15}
+    },
+    {
+      "title": "Stage 3 - PAN events ingested over time",
+      "graphStyle": "stacked_bar",
+      "xAxis": "time",
+      "query": "dataSource.name = 'Palo Alto Networks Firewall' | group count() by timestamp=timebucket('1h'), serverHost | transpose serverHost on timestamp",
+      "layout": {"w": 30, "h": 14, "x": 30, "y": 15}
+    },
+
+    {
+      "title": "Stage 4 - Drift events by flag type",
+      "graphStyle": "donut",
+      "maxPieSlices": 10,
+      "dataLabelType": "VALUE",
+      "query": "serverHost = 'pan-claroty-enriched' (claroty_edl_drift_flag = '1' or claroty_dag_reclassified_flag = '1' or claroty_unmanaged_cross_zone_flag = '1' or claroty_highrisk_offzone_flag = '1' or claroty_decommissioned_active_flag = '1') | let drift_type = claroty_edl_drift_flag == '1' ? 'EDL Drift' : claroty_dag_reclassified_flag == '1' ? 'DAG Reclassified' : claroty_unmanaged_cross_zone_flag == '1' ? 'Unmanaged Cross-Zone' : claroty_highrisk_offzone_flag == '1' ? 'High-Risk Off-Zone' : claroty_decommissioned_active_flag == '1' ? 'Decommissioned Active' : 'No Flag' | group hits = count() by drift_type | sort -hits",
+      "layout": {"w": 20, "h": 16, "x": 0, "y": 29}
+    },
+    {
+      "title": "Stage 4 - Drift by Claroty site",
+      "graphStyle": "donut",
+      "maxPieSlices": 10,
+      "dataLabelType": "VALUE",
+      "query": "serverHost = 'pan-claroty-enriched' (claroty_edl_drift_flag = '1' or claroty_dag_reclassified_flag = '1' or claroty_unmanaged_cross_zone_flag = '1' or claroty_highrisk_offzone_flag = '1' or claroty_decommissioned_active_flag = '1') | group hits = count() by claroty_site | sort -hits",
+      "layout": {"w": 20, "h": 16, "x": 20, "y": 29}
+    },
+    {
+      "title": "Stage 4 - Top drifting OT assets (24h)",
+      "graphStyle": "table",
+      "query": "serverHost = 'pan-claroty-enriched' (claroty_edl_drift_flag = '1' or claroty_dag_reclassified_flag = '1' or claroty_unmanaged_cross_zone_flag = '1' or claroty_highrisk_offzone_flag = '1' or claroty_decommissioned_active_flag = '1') | group hits = count(), criticality = any(claroty_criticality), risk = any(claroty_risk), site = any(claroty_site), status = any(claroty_status) by claroty_hostname | sort -hits | limit 20",
+      "layout": {"w": 20, "h": 16, "x": 40, "y": 29}
+    },
+
+    {
+      "title": "Stage 5 - Recent Claroty STAR drift events (rule fires)",
+      "graphStyle": "table",
+      "query": "serverHost = 'pan-claroty-enriched' (claroty_edl_drift_flag = '1' or claroty_dag_reclassified_flag = '1' or claroty_unmanaged_cross_zone_flag = '1' or claroty_highrisk_offzone_flag = '1' or claroty_decommissioned_active_flag = '1') | group hits = count(), criticality = any(claroty_criticality), risk = any(claroty_risk), site = any(claroty_site), status = any(claroty_status), hostname = any(claroty_hostname), expected_edl = any(claroty_expected_edl), observed_edl = any(src_external_dynamic_list), edl_drift = any(claroty_edl_drift_flag), reclassified = any(claroty_dag_reclassified_flag), unmanaged = any(claroty_unmanaged_cross_zone_flag), highrisk = any(claroty_highrisk_offzone_flag), decommissioned = any(claroty_decommissioned_active_flag) by scenario | sort -hits | limit 25",
+      "layout": {"w": 30, "h": 18, "x": 0, "y": 45}
+    },
+    {
+      "title": "Stage 5 - PANW Library triggers with Claroty enrichment",
+      "graphStyle": "table",
+      "query": "serverHost = 'pan-library-trigger' | group hits = count(), criticality = any(claroty_criticality), risk = any(claroty_risk), site = any(claroty_site), status = any(claroty_status), hostname = any(claroty_hostname), in_inventory = any(claroty_in_inventory), context = any(claroty_context) by library_rule_target | sort -hits | limit 25",
+      "layout": {"w": 30, "h": 18, "x": 30, "y": 45}
+    },
+
+    {
+      "title": "Stage 6 - Hyperautomation runbook reference",
+      "graphStyle": "markdown",
+      "markdown": "### Stage 6 - Hyperautomation `Claroty/PANW Alert - Auto Investigation + Verdict-driven Response`\n\n**Workflow id**: `3129f237-1718-482e-80da-e17a32801654` (state = *active*)\n\n**Trigger filter groups**:\n\n1. STAR alerts: `name contains 'Claroty'` AND `severity in [HIGH, CRITICAL]`\n2. Library alerts: `name contains 'PANW Firewall'` OR `name contains 'Palo Alto Networks Firewall'`\n\n**Steps**: capture alert context -> call `S1/aiInvestigation/run` (Library alerts only) -> email *investigation started* -> wait 180 s -> read `aiInvestigation.verdict` -> if `FALSE_POSITIVE` => email + close alert; else => email findings + recommendations.\n\nApproved verdicts should drive **PAN EDL / DAG update** via the `Update-PAN-EDL` action (binding to Palo Alto Networks Firewall integration in *Hyperautomation -> Integrations*).\n\n*Counts shown above use the raw underlying events. For the alert objects themselves and analyst verdicts, switch to Detect -> Findings.*",
+      "layout": {"w": 60, "h": 12, "x": 0, "y": 63}
+    }
+  ]
+}

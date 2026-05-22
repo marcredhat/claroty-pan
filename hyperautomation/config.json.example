@@ -1,0 +1,5 @@
+{
+  "_comment": "Mgmt console API token + base URL for the import_workflow.py / find_purple_workflow.py helpers.",
+  "base_url": "https://<your-region>.sentinelone.net",
+  "api_token": "REPLACE_WITH_CONSOLE_API_TOKEN"
+}

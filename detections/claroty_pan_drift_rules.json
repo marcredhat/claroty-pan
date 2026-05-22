@@ -1,0 +1,121 @@
+{
+  "name": "Claroty x Palo Alto Drift",
+  "version": "1.0.0",
+  "vendor": "SentinelOne AI SIEM (library)",
+  "description": "Custom detections that correlate Claroty OT asset inventory with Palo Alto Networks firewall traffic, alerting on policy / tag drift and unmanaged assets.",
+  "lookups": [
+    "claroty_assets"
+  ],
+  "rules": [
+    {
+      "name": "OT critical asset has wrong or missing Palo Alto EDL/DAG",
+      "ruleId": "claroty-pan-d1",
+      "severity": "High",
+      "category": "Policy Drift",
+      "description": "A device that Claroty classifies as Critical or High is observed in Palo Alto traffic with an src_external_dynamic_list or src_dynamic_address_group that does NOT match the value expected by the Claroty inventory record. Indicates onboarding miss or stale tag.",
+      "queryLanguage": "PowerQuery",
+      "queryType": "events",
+      "scheduleType": "every_5_minutes",
+      "expirationMode": "alert",
+      "thresholdHits": 1,
+      "groupByFields": [
+        "src.ip.address",
+        "device_type",
+        "site"
+      ],
+      "responseActions": [
+        "trigger:hyperautomation:update_pan_tag",
+        "trigger:hyperautomation:append_pan_edl"
+      ],
+      "s1ql": "serverHost='pan-claroty-demo' and dataSource.name contains 'Palo Alto'\n| lookup device_type, criticality, expected_edl, expected_dag, site\n    from claroty_assets by ip = src.ip.address\n| filter criticality in ('Critical','High')\n| filter src_external_dynamic_list != expected_edl\n      or src_dynamic_address_group != expected_dag\n| group hits=count()\n    by src.ip.address, device_type, criticality, site,\n       src_external_dynamic_list, expected_edl,\n       src_dynamic_address_group, expected_dag\n| sort -hits"
+    },
+    {
+      "name": "OT device reclassified in Claroty but Palo Alto tagging is stale",
+      "ruleId": "claroty-pan-d2",
+      "severity": "Medium",
+      "category": "Policy Drift",
+      "description": "Claroty has updated the device_type for an asset (e.g., HMI -> EWS), but Palo Alto traffic from that IP still references the previous dynamic address group. Trigger Hyperautomation to re-tag.",
+      "queryLanguage": "PowerQuery",
+      "queryType": "events",
+      "scheduleType": "every_5_minutes",
+      "expirationMode": "alert",
+      "thresholdHits": 1,
+      "groupByFields": [
+        "src.ip.address",
+        "device_type",
+        "site"
+      ],
+      "responseActions": [
+        "trigger:hyperautomation:update_pan_tag",
+        "trigger:hyperautomation:append_pan_edl"
+      ],
+      "s1ql": "serverHost='pan-claroty-demo' and dataSource.name contains 'Palo Alto'\n| lookup device_type, expected_dag, hostname, site\n    from claroty_assets by ip = src.ip.address\n| filter device_type != null\n      and device_type != 'Decommissioned'\n      and device_type != 'Unknown'\n| filter src_dynamic_address_group != expected_dag\n| group hits=count()\n    by src.ip.address, hostname, device_type, site,\n       src_dynamic_address_group, expected_dag\n| sort -hits"
+    },
+    {
+      "name": "Newly discovered or unmanaged OT asset crossing zones",
+      "ruleId": "claroty-pan-d3",
+      "severity": "High",
+      "category": "Unmanaged Asset",
+      "description": "An IP that Claroty considers Unknown / unassigned to any policy group is observed sending Palo Alto traffic ACROSS zones (src_zone != dst_zone). Likely a freshly attached shadow device.",
+      "queryLanguage": "PowerQuery",
+      "queryType": "events",
+      "scheduleType": "every_5_minutes",
+      "expirationMode": "alert",
+      "thresholdHits": 1,
+      "groupByFields": [
+        "src.ip.address",
+        "device_type",
+        "site"
+      ],
+      "responseActions": [
+        "trigger:hyperautomation:update_pan_tag",
+        "trigger:hyperautomation:append_pan_edl"
+      ],
+      "s1ql": "serverHost='pan-claroty-demo' and dataSource.name contains 'Palo Alto'\n| lookup device_type, approved_policy_group, site\n    from claroty_assets by ip = src.ip.address\n| filter approved_policy_group == 'unassigned'\n      or device_type == 'Unknown'\n| filter src_zone != dst_zone\n| group hits=count()\n    by src.ip.address, device_type, site, src_zone, dst_zone\n| sort -hits"
+    },
+    {
+      "name": "High-risk Claroty asset communicating outside its approved zone",
+      "ruleId": "claroty-pan-d4",
+      "severity": "Critical",
+      "category": "Lateral / Exfil",
+      "description": "A Claroty asset with risk score >= 80 is communicating to a destination zone that is outside the OT trust boundary (IT-CORP, INTERNET, DMZ, GUEST). Strong candidate for immediate EDL block via Hyperautomation.",
+      "queryLanguage": "PowerQuery",
+      "queryType": "events",
+      "scheduleType": "every_5_minutes",
+      "expirationMode": "alert",
+      "thresholdHits": 1,
+      "groupByFields": [
+        "src.ip.address",
+        "device_type",
+        "site"
+      ],
+      "responseActions": [
+        "trigger:hyperautomation:update_pan_tag",
+        "trigger:hyperautomation:append_pan_edl"
+      ],
+      "s1ql": "serverHost='pan-claroty-demo' and dataSource.name contains 'Palo Alto'\n| lookup device_type, claroty_risk, approved_policy_group, site, zone\n    from claroty_assets by ip = src.ip.address\n| filter device_type != null\n| filter claroty_risk >= '80'\n| filter dst_zone in ('IT-CORP','INTERNET','DMZ','GUEST')\n| group hits=count()\n    by src.ip.address, device_type, claroty_risk, site,\n       src_zone, dst_zone, application\n| sort -hits"
+    },
+    {
+      "name": "Decommissioned Claroty asset still resolved by an active EDL/DAG",
+      "ruleId": "claroty-pan-d5",
+      "severity": "Medium",
+      "category": "Policy Drift",
+      "description": "Claroty has marked an asset as Decommissioned (criticality=None) but Palo Alto traffic is still showing it tagged in a production EDL or DAG. The EDL source is out of sync with Claroty.",
+      "queryLanguage": "PowerQuery",
+      "queryType": "events",
+      "scheduleType": "every_5_minutes",
+      "expirationMode": "alert",
+      "thresholdHits": 1,
+      "groupByFields": [
+        "src.ip.address",
+        "device_type",
+        "site"
+      ],
+      "responseActions": [
+        "trigger:hyperautomation:update_pan_tag",
+        "trigger:hyperautomation:append_pan_edl"
+      ],
+      "s1ql": "serverHost='pan-claroty-demo' and dataSource.name contains 'Palo Alto'\n| lookup device_type, criticality\n    from claroty_assets by ip = src.ip.address\n| filter device_type == 'Decommissioned' or criticality == 'None'\n| filter src_external_dynamic_list != ''\n      and src_external_dynamic_list != 'unknown'\n| group hits=count()\n    by src.ip.address, device_type, criticality,\n       src_external_dynamic_list, src_dynamic_address_group"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to config.json and fill in your tenant. Never commit real tokens.",
+  "base_url": "https://<your-region>.sentinelone.net/",
+  "log_write_key": "REPLACE_WITH_LOG_WRITE_KEY",
+  "log_read_key": "REPLACE_WITH_LOG_READ_KEY",
+  "config_read_key": "REPLACE_WITH_CONFIG_READ_KEY",
+  "config_write_key": "REPLACE_WITH_CONFIG_WRITE_KEY",
+  "console_api_token": "REPLACE_WITH_CONSOLE_API_TOKEN",
+  "s1_scope": "",
+  "verify_tls": true,
+  "timeout_seconds": 30
+}

@@ -1,0 +1,819 @@
+{
+  "name": "Claroty/PANW Alert — Auto Investigation + Verdict-driven Response",
+  "description": "Fires automatically on (a) HIGH/CRITICAL Custom STAR alerts whose name contains 'Claroty' (the 5 drift detections — note: STAR alerts do NOT support Purple AI auto-investigation, so for those the workflow only emails + closes/escalates), AND (b) any PANW Firewall Library Detection alert (which DOES support auto-investigation; those events carry claroty_* enrichment so Purple AI correlates PAN behaviour with Claroty asset context before producing a verdict). Steps: (1) capture alert context into local vars; (2) call alertTriggerActions S1/aiInvestigation/run via UAM GraphQL (same as Trigger Purple AI Investigation); (3) email SOC that investigation started; (4) wait 180s; (5) query alert + aiInvestigation back; (6) branch on aiInvestigation.verdict — FALSE_POSITIVE => email + close alert (setAnalystVerdict + setStatus RESOLVED); TRUE_POSITIVE / other => email with verdict, summary, findings and recommendations. PRE-IMPORT: configure the SentinelOne integration connection in Hyperautomation -> Integrations, then re-bind the http_request actions to it (the connection_id below mirrors the one used by the existing Trigger Purple AI Investigation workflow). Replace marc.chisinevski@sentinelone.com with the real distribution list. Verify the aiInvestigation field names in your tenant's GraphQL schema (this workflow assumes 'status', 'verdict', 'summary', 'findings', 'recommendations').",
+  "actions": [
+    {
+      "action": {
+        "type": "singularity_response_trigger",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Singularity Response Trigger",
+          "action_type": "singularity_response_trigger",
+          "filter_groups": [
+            {
+              "condition": {
+                "operator": "and",
+                "conditions": [
+                  {
+                    "input_value": "name",
+                    "compared_value": "Claroty",
+                    "comparison_operator": "contains"
+                  },
+                  {
+                    "input_value": "severity",
+                    "compared_value": "[\"HIGH\",\"CRITICAL\"]",
+                    "comparison_operator": "in"
+                  }
+                ]
+              },
+              "is_disabled": false,
+              "run_automatically": true,
+              "event_type": "alert",
+              "event_subtypes": [
+                "CREATE"
+              ]
+            },
+            {
+              "condition": {
+                "operator": "or",
+                "conditions": [
+                  {
+                    "input_value": "name",
+                    "compared_value": "PANW Firewall",
+                    "comparison_operator": "contains"
+                  },
+                  {
+                    "input_value": "name",
+                    "compared_value": "Palo Alto Networks Firewall",
+                    "comparison_operator": "contains"
+                  }
+                ]
+              },
+              "is_disabled": false,
+              "run_automatically": true,
+              "event_type": "alert",
+              "event_subtypes": [
+                "CREATE"
+              ]
+            }
+          ]
+        },
+        "state": "active",
+        "description": null,
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 100
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 10,
+      "connected_to": [
+        {
+          "target": 9,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "variable",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Set variables",
+          "action_type": "variable",
+          "variables": [
+            {
+              "name": "tenant_id",
+              "value": "{{singularity-response-trigger.data.realTime.scope.account.id}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "site_id",
+              "value": "{{singularity-response-trigger.data.realTime.scope.site.id}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "uuid",
+              "value": "{{Function.GENERATE_UUID4()}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "alert_id",
+              "value": "{{singularity-response-trigger.data.id}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "alert_name",
+              "value": "{{singularity-response-trigger.data.name}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "alert_severity",
+              "value": "{{singularity-response-trigger.data.severity}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "alert_desc",
+              "value": "{{singularity-response-trigger.data.description}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            }
+          ],
+          "variables_scope": "local",
+          "expire_in_unit": null,
+          "expire_in_value": null,
+          "expire_method": null,
+          "global_var_workflow_access_type": null,
+          "global_var_workflow_access_workflow_ids": null
+        },
+        "state": "active",
+        "description": "Capture the alert context once so every downstream step (email, close, recommendations) can reference it cheaply.",
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 200
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 9,
+      "connected_to": [
+        {
+          "target": 8,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "http_request",
+        "tag": "core_action",
+        "connection_id": "<YOUR_CONNECTION_ID>",
+        "connection_name": "",
+        "use_connection_name": false,
+        "integration_id": "<YOUR_INTEGRATION_ID>",
+        "data": {
+          "name": "Trigger AI Investigation",
+          "action_type": "http_request",
+          "public_action_id": null,
+          "method": "post",
+          "url": "{{Connection.protocol}}{{Connection.url}}/web/api/v2.1/unifiedalerts/graphql",
+          "url_path": null,
+          "url_prefix": null,
+          "payload": "{\"operationName\":\"AlertTriggerActions\",\"query\":\"mutation AlertTriggerActions($scope: ScopeSelectorInput, $filter: OrFilterSelectionInput, $actions: [TriggerActionInput!]!, $viewType: ViewType) { alertTriggerActions(filter: $filter, scope: $scope, actions: $actions, viewType: $viewType) { ... on ActionsTriggered { actions { actionId success { id } failure { id errorMessage } skip { id } } } ... on TriggerActionsError { errors { errorMessage } } } }\",\"variables\":{\"scope\":{\"scopeIds\":[\"{{local_var.site_id}}\"],\"scopeType\":\"SITE\"},\"filter\":{\"or\":[{\"and\":[{\"fieldId\":\"id\",\"stringEqual\":{\"value\":\"{{local_var.alert_id}}\"}}]}]},\"viewType\":\"ALL\",\"actions\":[{\"id\":\"S1/aiInvestigation/run\",\"payload\":{\"aiInvestigation\":{\"scope\":{\"scopeIds\":[\"{{local_var.site_id}}\"],\"scopeType\":\"SITE\"},\"tenantId\":\"{{local_var.tenant_id}}\",\"userAgent\":\"SentinelOne-Hyperautomation\",\"sessionId\":\"{{local_var.uuid}}\",\"userTime\":\"{{Function.DATETIME_NOW()}}\",\"consoleVersion\":\"S-26.1.6\"}}}]}}",
+          "parameters": [],
+          "retry_on_status_code": null,
+          "retry_on_status_codes": [
+            500
+          ],
+          "ssl_verification": true,
+          "timeout": 30,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "use_authentication_data": true,
+          "use_proxy": false,
+          "proxy_user": null,
+          "proxy_password": null,
+          "proxy_host": null,
+          "proxy_port": null,
+          "redirect_follow": true,
+          "continue_on_fail": false,
+          "continue_on_fail_status_codes": [],
+          "body_type": "json"
+        },
+        "state": "active",
+        "description": "Kick off Purple AI investigation on this alert (same mutation used by the existing 'Trigger Purple AI Investigation' workflow).",
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 400
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 8,
+      "connected_to": [
+        {
+          "target": 7,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "send_email",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Email — Investigation Started",
+          "action_type": "send_email",
+          "subject": "[SentinelOne] Claroty alert under investigation — {{local_var.alert_name}}",
+          "to": [
+            "marc.chisinevski@sentinelone.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "reply_to": [],
+          "mime_type": "text/html",
+          "body": "<h2>Claroty Alert Under Purple AI Investigation</h2><p><b>Alert ID:</b> {{local_var.alert_id}}<br><b>Name:</b> {{local_var.alert_name}}<br><b>Severity:</b> {{local_var.alert_severity}}<br><b>Description:</b> {{local_var.alert_desc}}</p><p>Purple AI investigation has been triggered automatically. You will receive a follow-up email once the verdict is in (~3 minutes).</p><p style='color:#888;font-size:smaller'>session_id: {{local_var.uuid}} &middot; tenant: {{local_var.tenant_id}}</p>",
+          "attachments": [],
+          "continue_on_fail": false
+        },
+        "state": "active",
+        "description": null,
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 600
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 7,
+      "connected_to": [
+        {
+          "target": 11,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "condition",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Is False Positive?",
+          "action_type": "condition",
+          "condition_type": "multi",
+          "condition": null,
+          "conditions": [
+            {
+              "input_value": "{{local_var.verdict}}",
+              "compared_value": "FALSE_POSITIVE",
+              "comparison_operator": "equals"
+            }
+          ],
+          "conditions_relationship": "and"
+        },
+        "state": "active",
+        "description": "Branch the response based on Purple AI's verdict.",
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 1400
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 3,
+      "connected_to": [
+        {
+          "target": 2,
+          "custom_handle": "true",
+          "payload": null
+        },
+        {
+          "target": 0,
+          "custom_handle": "false",
+          "payload": null
+        }
+      ],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "send_email",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Email — False Positive, Closing",
+          "action_type": "send_email",
+          "subject": "[SentinelOne] {{local_var.alert_name}} — verdict FALSE POSITIVE, closing",
+          "to": [
+            "marc.chisinevski@sentinelone.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "reply_to": [],
+          "mime_type": "text/html",
+          "body": "<h2>Claroty Alert Auto-Closed (False Positive)</h2><p><b>Alert ID:</b> {{local_var.alert_id}}<br><b>Name:</b> {{local_var.alert_name}}<br><b>Severity:</b> {{local_var.alert_severity}}<br><b>Purple AI verdict:</b> FALSE_POSITIVE</p><h3>Purple AI Result</h3><pre>{{local_var.result}}</pre><p><b>AI status:</b> {{local_var.status_ai}} &middot; <b>Purple status:</b> {{local_var.purple_status}} &middot; <b>Step:</b> {{local_var.investigation_step}} &middot; <b>Completed:</b> {{local_var.timestamp_ai}}</p><p>The alert has been auto-resolved with analystVerdict=FALSE_POSITIVE.</p>",
+          "attachments": [],
+          "continue_on_fail": false
+        },
+        "state": "active",
+        "description": null,
+        "client_data": {
+          "position": {
+            "x": -200,
+            "y": 1600
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 2,
+      "connected_to": [
+        {
+          "target": 1,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "http_request",
+        "tag": "core_action",
+        "connection_id": "<YOUR_CONNECTION_ID>",
+        "connection_name": "",
+        "use_connection_name": false,
+        "integration_id": "<YOUR_INTEGRATION_ID>",
+        "data": {
+          "name": "Close Alert (FP)",
+          "action_type": "http_request",
+          "public_action_id": null,
+          "method": "post",
+          "url": "{{Connection.protocol}}{{Connection.url}}/web/api/v2.1/unifiedalerts/graphql",
+          "url_path": null,
+          "url_prefix": null,
+          "payload": "{\"operationName\":\"AlertTriggerActions\",\"query\":\"mutation AlertTriggerActions($scope: ScopeSelectorInput, $filter: OrFilterSelectionInput, $actions: [TriggerActionInput!]!, $viewType: ViewType) { alertTriggerActions(filter: $filter, scope: $scope, actions: $actions, viewType: $viewType) { ... on ActionsTriggered { actions { actionId success { id } failure { id errorMessage } } } ... on TriggerActionsError { errors { errorMessage } } } }\",\"variables\":{\"scope\":{\"scopeIds\":[\"{{local_var.site_id}}\"],\"scopeType\":\"SITE\"},\"filter\":{\"or\":[{\"and\":[{\"fieldId\":\"id\",\"stringEqual\":{\"value\":\"{{local_var.alert_id}}\"}}]}]},\"viewType\":\"ALL\",\"actions\":[{\"id\":\"S1/alert/setAnalystVerdict\",\"payload\":{\"analystVerdict\":{\"value\":\"FALSE_POSITIVE\"}}},{\"id\":\"S1/alert/setStatus\",\"payload\":{\"status\":{\"value\":\"RESOLVED\"}}},{\"id\":\"S1/alert/addNote\",\"payload\":{\"note\":{\"value\":\"Auto-closed by Hyperautomation: Purple AI verdict = FALSE_POSITIVE. Session: {{local_var.uuid}}\"}}}]}}",
+          "parameters": [],
+          "retry_on_status_code": null,
+          "retry_on_status_codes": [
+            500
+          ],
+          "ssl_verification": true,
+          "timeout": 30,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "use_authentication_data": true,
+          "use_proxy": false,
+          "proxy_user": null,
+          "proxy_password": null,
+          "proxy_host": null,
+          "proxy_port": null,
+          "redirect_follow": true,
+          "continue_on_fail": false,
+          "continue_on_fail_status_codes": [],
+          "body_type": "json"
+        },
+        "state": "active",
+        "description": "Set analystVerdict=FALSE_POSITIVE, status=RESOLVED, and attach an audit note.",
+        "client_data": {
+          "position": {
+            "x": -200,
+            "y": 1800
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 1,
+      "connected_to": [],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "send_email",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Email — True Positive Verdict + Recommendations",
+          "action_type": "send_email",
+          "subject": "[SentinelOne] {{local_var.alert_name}} — verdict {{local_var.verdict}}, action required",
+          "to": [
+            "marc.chisinevski@sentinelone.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "reply_to": [],
+          "mime_type": "text/html",
+          "body": "<h2>Claroty Alert — Purple AI Verdict: {{local_var.verdict}}</h2><p><b>Alert ID:</b> {{local_var.alert_id}}<br><b>Name:</b> {{local_var.alert_name}}<br><b>Severity:</b> {{local_var.alert_severity}}<br><b>Description:</b> {{local_var.alert_desc}}</p><h3>Purple AI Result</h3><pre>{{local_var.result}}</pre><p><b>AI status:</b> {{local_var.status_ai}} &middot; <b>Purple status:</b> {{local_var.purple_status}} &middot; <b>Step:</b> {{local_var.investigation_step}} &middot; <b>Completed:</b> {{local_var.timestamp_ai}}</p><p>The alert remains <b>OPEN</b>. Review and action via the Singularity Console.</p>",
+          "attachments": [],
+          "continue_on_fail": false
+        },
+        "state": "active",
+        "description": null,
+        "client_data": {
+          "position": {
+            "x": 200,
+            "y": 1600
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 0,
+      "connected_to": [],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "loop",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Poll Investigation (while true, break on terminal)",
+          "action_type": "loop",
+          "loop_type": "while",
+          "number_of_iterations": "20",
+          "object_to_iterate": "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]",
+          "is_parallel": false,
+          "mode": "while",
+          "expression": "true"
+        },
+        "state": "active",
+        "description": "Poll aiInvestigations every 30 s for up to 5 min. Each iteration overwrites local_var.verdict/result/status_ai so the final iteration's value is what reaches the 'Is False Positive?' branch.",
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 800
+          },
+          "dimensions": {
+            "width": 768,
+            "height": 320
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 11,
+      "connected_to": [
+        {
+          "target": 3,
+          "custom_handle": null,
+          "payload": null
+        },
+        {
+          "target": 12,
+          "custom_handle": "inner",
+          "payload": null
+        }
+      ],
+      "parent_action": null
+    },
+    {
+      "action": {
+        "type": "delay",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Poll Delay 30s",
+          "action_type": "delay",
+          "time_unit": "seconds",
+          "value": 30
+        },
+        "state": "active",
+        "description": "30 s between polls inside the loop.",
+        "client_data": {
+          "position": {
+            "x": -200,
+            "y": 900
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 12,
+      "connected_to": [
+        {
+          "target": 13,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": 11
+    },
+    {
+      "action": {
+        "type": "http_request",
+        "tag": "core_action",
+        "connection_id": "<YOUR_CONNECTION_ID>",
+        "connection_name": "",
+        "use_connection_name": false,
+        "integration_id": "<YOUR_INTEGRATION_ID>",
+        "data": {
+          "name": "Get Investigation Result (loop)",
+          "action_type": "http_request",
+          "public_action_id": null,
+          "method": "post",
+          "url": "{{Connection.protocol}}{{Connection.url}}/web/api/v2.1/unifiedalerts/graphql",
+          "url_path": null,
+          "url_prefix": null,
+          "payload": "{\"operationName\":\"GetAutoInvestigationVerdict\",\"query\":\"query GetAutoInvestigationVerdict($alertId: ID!, $alertIds: [ID!]!, $scope: ScopeSelectorInput) { alert(id: $alertId, scope: $scope) { id name severity status analystVerdict aiInvestigation { status verdict timestamp } } aiInvestigations(alertIds: $alertIds, scope: $scope) { alertId status verdict result purpleAiStatus investigationStep restrictionReason timestamp } }\",\"variables\":{\"alertId\":\"{{local_var.alert_id}}\",\"alertIds\":[\"{{local_var.alert_id}}\"],\"scope\":{\"scopeIds\":[\"{{local_var.site_id}}\"],\"scopeType\":\"SITE\"}}}",
+          "parameters": [],
+          "retry_on_status_code": null,
+          "retry_on_status_codes": [
+            500
+          ],
+          "ssl_verification": true,
+          "timeout": 30,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "use_authentication_data": true,
+          "use_proxy": false,
+          "proxy_user": null,
+          "proxy_password": null,
+          "proxy_host": null,
+          "proxy_port": null,
+          "redirect_follow": true,
+          "continue_on_fail": false,
+          "continue_on_fail_status_codes": [],
+          "body_type": "json"
+        },
+        "state": "active",
+        "description": "Read aiInvestigation block back from the alert.",
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 1000
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 100
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 13,
+      "connected_to": [
+        {
+          "target": 14,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": 11
+    },
+    {
+      "action": {
+        "type": "variable",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Extract Verdict (loop)",
+          "action_type": "variable",
+          "variables": [
+            {
+              "name": "verdict",
+              "value": "{{get-investigation-result-loop.body.data.aiInvestigations[0].verdict}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "result",
+              "value": "{{get-investigation-result-loop.body.data.aiInvestigations[0].result}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "status_ai",
+              "value": "{{get-investigation-result-loop.body.data.aiInvestigations[0].status}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "purple_status",
+              "value": "{{get-investigation-result-loop.body.data.aiInvestigations[0].purpleAiStatus}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "investigation_step",
+              "value": "{{get-investigation-result-loop.body.data.aiInvestigations[0].investigationStep}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "timestamp_ai",
+              "value": "{{get-investigation-result-loop.body.data.aiInvestigations[0].timestamp}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            },
+            {
+              "name": "verdict_summary",
+              "value": "{{get-investigation-result-loop.body.data.alert.aiInvestigation.verdict}}",
+              "should_use_as_output": false,
+              "is_secret": false
+            }
+          ],
+          "variables_scope": "local",
+          "expire_in_unit": null,
+          "expire_in_value": null,
+          "expire_method": null,
+          "global_var_workflow_access_type": null,
+          "global_var_workflow_access_workflow_ids": null
+        },
+        "state": "active",
+        "description": "Overwrite local_var.* with this iteration's poll result.",
+        "client_data": {
+          "position": {
+            "x": 200,
+            "y": 1100
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 14,
+      "connected_to": [
+        {
+          "target": 15,
+          "custom_handle": null,
+          "payload": null
+        }
+      ],
+      "parent_action": 11
+    },
+    {
+      "action": {
+        "type": "condition",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Is Investigation Done?",
+          "action_type": "condition",
+          "condition_type": "multi",
+          "condition": null,
+          "conditions": [
+            {
+              "input_value": "{{local_var.status_ai}}",
+              "compared_value": "[\"COMPLETED\",\"FAILED\",\"RESTRICTED\"]",
+              "comparison_operator": "in"
+            }
+          ],
+          "conditions_relationship": "and",
+          "expression": "{{local_var.status_ai}} in ['COMPLETED','FAILED','RESTRICTED']"
+        },
+        "state": "active",
+        "description": "Exit poll loop as soon as Purple AI reaches a terminal state.",
+        "client_data": {
+          "position": {
+            "x": 0,
+            "y": 1200
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 15,
+      "connected_to": [
+        {
+          "target": 16,
+          "custom_handle": "true",
+          "payload": null
+        }
+      ],
+      "parent_action": 11
+    },
+    {
+      "action": {
+        "type": "break_loop",
+        "tag": "core_action",
+        "connection_id": null,
+        "connection_name": null,
+        "use_connection_name": false,
+        "integration_id": null,
+        "data": {
+          "name": "Break Poll Loop",
+          "action_type": "break_loop"
+        },
+        "state": "active",
+        "description": "Exit the polling loop cleanly when status is terminal.",
+        "client_data": {
+          "position": {
+            "x": 200,
+            "y": 1300
+          },
+          "dimensions": {
+            "width": 256,
+            "height": 76
+          },
+          "collapsed": false
+        },
+        "snippet_workflow_id": null,
+        "snippet_version_id": null
+      },
+      "export_id": 16,
+      "connected_to": [],
+      "parent_action": 11
+    }
+  ],
+  "notes": []
+}
