@@ -51,9 +51,9 @@
       "layout": {"w": 30, "h": 14, "x": 30, "y": 20}
     },
     {
-      "title": "HMI/EWS writes correlated with PV anomalies (same minute, same asset)",
+      "title": "BLAST_FURNACE/SAFETY writes correlated with PV anomalies (same minute, same asset)",
       "graphStyle": "table",
-      "query": "| inner join\n  writes = (\n    filter( dataset == 'nozomi' )\n    | parse '\"role\": \"$role{regex=[^\"]+}$\"' from message\n    | parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n    | parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n    | filter role == \"HMI\" or role == \"EWS\"\n    | filter function_code == \"5\" or function_code == \"6\" or function_code == \"15\" or function_code == \"16\" or function_code == \"WRITE_VAR\"\n    | group writes_n = count() by min = timebucket('1 minute'), asset_name\n  ),\n  anom = (\n    filter( dataset == 'nozomi' )\n    | parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n    | parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n    | filter alert_type == \"PROCESS_VARIABLE_ANOMALY\"\n    | group anom_n = count() by min = timebucket('1 minute'), asset_name\n  )\n  on min, asset_name\n| group total_writes = sum(writes_n), total_anom = sum(anom_n), corr_minutes = count() by asset_name\n| sort - corr_minutes, - total_anom\n| limit 20",
+      "query": "| filter( dataset == 'nozomi' )\n| parse '\"alert_type\": \"$alert_type{regex=[^\"]+}$\"' from message\n| parse '\"function_code\": \"$function_code{regex=[^\"]+}$\"' from message\n| parse '\"asset_name\": \"$asset_name{regex=[^\"]+}$\"' from message\n| parse '\"zone\": \"$zone{regex=[^\"]+}$\"' from message\n| group\n    writes    = count( (zone == \"BLAST_FURNACE\" or zone == \"SAFETY\") and (function_code == \"5\" or function_code == \"6\" or function_code == \"15\" or function_code == \"16\" or function_code == \"WRITE_VAR\") ),\n    anomalies = count( alert_type == \"PROCESS_VARIABLE_ANOMALY\" )\n  by min = timebucket('1 minute'), asset_name\n| filter writes > 0 and anomalies > 0\n| group corr_minutes = count(), total_writes = sum(writes), total_anom = sum(anomalies) by asset_name\n| filter asset_name = *\n| sort - corr_minutes, - total_anom\n| limit 20",
       "layout": {"w": 60, "h": 16, "x": 0, "y": 34}
     },
     {
