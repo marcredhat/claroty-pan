@@ -3,12 +3,24 @@
 Ingest Nozomi + Claroty fresh data as OpenTelemetry logs via grpcurl.
 
 Usage:
-    python3 ingest_fresh_otel.py [path/to/config.json]
+    # 1) Quickest path - just pass the SentinelOne Data Pipelines endpoint:
+    python3 ingest_fresh_otel.py --oteldest your-tenant.observo.ai:10020
 
-The config file (default: ./config.json) must contain an `otel` block, e.g.:
+    # 2) With a bearer token and/or extra headers (-H repeatable):
+    python3 ingest_fresh_otel.py \
+        --oteldest your-tenant.observo.ai:10020 \
+        -H 'authorization: Bearer REPLACE_ME'
+
+    # 3) Read everything (endpoint, headers, batch_size, ...) from a config:
+    python3 ingest_fresh_otel.py --config config.json
+
+`--oteldest` always wins over `otel.endpoint` from the config file.
+
+Optional config (default: ./config.json, ignored if missing and --oteldest
+is provided) may contain an `otel` block, e.g.:
 
     "otel": {
-        "endpoint":          "your-tenant.observo.ai:443",
+        "endpoint":          "your-tenant.observo.ai:10020",
         "headers":           {"authorization": "Bearer REPLACE_ME"},
         "service_name":      "claroty-pan-otel",
         "plaintext":         false,
@@ -34,6 +46,7 @@ real endpoint, token, or tenant identifier.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -44,7 +57,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 ROOT = Path(__file__).resolve().parent
 
@@ -72,18 +85,38 @@ def die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
-def load_config(path: Path) -> Dict[str, Any]:
+def load_config(path: Path, *, required: bool) -> Dict[str, Any]:
+    """Load the `otel` block from a config file.
+
+    If `required` is False and the file is missing, return an empty dict
+    so CLI flags can fully drive the run.
+    """
     if not path.exists():
-        die(f"config not found: {path}")
+        if required:
+            die(f"config not found: {path}")
+        return {}
     try:
         cfg = json.loads(path.read_text())
     except json.JSONDecodeError as e:
         die(f"config is not valid JSON: {e}")
-    otel = cfg.get("otel") or {}
+    return dict(cfg.get("otel") or {})
+
+
+def parse_header_args(values: Optional[List[str]]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for raw in values or []:
+        if ":" not in raw:
+            die(f"invalid -H value (expected 'Key: Value'): {raw!r}")
+        k, v = raw.split(":", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def apply_defaults(otel: Dict[str, Any]) -> Dict[str, Any]:
     if not otel.get("endpoint"):
         die(
-            "config is missing required `otel.endpoint` "
-            "(e.g. 'your-tenant.observo.ai:443')"
+            "missing OTLP endpoint - pass --oteldest HOST:PORT "
+            "or set otel.endpoint in the config file"
         )
     otel.setdefault("headers", {})
     otel.setdefault("service_name", "claroty-pan-otel")
@@ -326,16 +359,105 @@ def send_dataset(otel: Dict[str, Any], proto_root: Path, dataset: str,
         grpcurl_export(otel, proto_root, payload)
 
 
-def main(argv: List[str]) -> int:
-    cfg_path = Path(argv[1]) if len(argv) > 1 else ROOT / "config.json"
-    print(f"[+] using config: {cfg_path}")
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="ingest_fresh_otel.py",
+        description=(
+            "Send Nozomi + Claroty sample data to a SentinelOne Data "
+            "Pipelines (OTLP/gRPC) endpoint via grpcurl."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "--oteldest",
+        metavar="HOST:PORT",
+        help="SentinelOne Data Pipelines OTLP/gRPC endpoint "
+             "(overrides otel.endpoint in the config file).",
+    )
+    p.add_argument(
+        "--config",
+        default=str(ROOT / "config.json"),
+        metavar="PATH",
+        help="Path to config.json (default: ./config.json). "
+             "Ignored if missing and --oteldest is provided.",
+    )
+    p.add_argument(
+        "-H", "--header",
+        action="append",
+        metavar="'Key: Value'",
+        help="Extra gRPC metadata header (repeatable). Merged on top of "
+             "otel.headers from the config.",
+    )
+    p.add_argument(
+        "--service-name",
+        help="Override otel.service_name (resource attribute service.name).",
+    )
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        help="Override otel.batch_size (log records per Export call).",
+    )
+    p.add_argument(
+        "--plaintext",
+        action="store_true",
+        help="Use plaintext gRPC (no TLS).",
+    )
+    p.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Use TLS but skip certificate verification.",
+    )
+    p.add_argument(
+        "--proto-import-path",
+        help="Directory holding opentelemetry-proto checkout "
+             "(default: /tmp/otlp; auto-cloned if missing).",
+    )
+    p.add_argument(
+        "config_positional",
+        nargs="?",
+        help=argparse.SUPPRESS,  # backward-compat: positional config path
+    )
+    return p
 
-    otel = load_config(cfg_path)
+
+def resolve_otel(args: argparse.Namespace) -> Dict[str, Any]:
+    cfg_path_str = args.config_positional or args.config
+    cfg_path = Path(cfg_path_str)
+    # Config is required only if --oteldest is NOT given.
+    otel = load_config(cfg_path, required=not bool(args.oteldest))
+
+    if args.oteldest:
+        otel["endpoint"] = args.oteldest
+    if args.service_name:
+        otel["service_name"] = args.service_name
+    if args.batch_size is not None:
+        otel["batch_size"] = args.batch_size
+    if args.plaintext:
+        otel["plaintext"] = True
+    if args.insecure:
+        otel["insecure"] = True
+    if args.proto_import_path:
+        otel["proto_import_path"] = args.proto_import_path
+
+    merged_headers = dict(otel.get("headers") or {})
+    merged_headers.update(parse_header_args(args.header))
+    otel["headers"] = merged_headers
+
+    print(f"[+] using config: {cfg_path}"
+          f"{'' if cfg_path.exists() else ' (not found, CLI-only run)'}")
+    return apply_defaults(otel)
+
+
+def main(argv: List[str]) -> int:
+    args = build_argparser().parse_args(argv[1:])
+
+    otel = resolve_otel(args)
     ensure_grpcurl()
     proto_root = ensure_proto(otel["proto_import_path"])
     print(f"[+] OTLP proto path: {proto_root}")
     print(f"[+] OTLP endpoint:   {otel['endpoint']}")
     print(f"[+] service.name:    {otel['service_name']}")
+    print(f"[+] headers:         {sorted(otel['headers'].keys()) or '(none)'}")
 
     now_ns = int(time.time() * 1_000_000_000)
 
