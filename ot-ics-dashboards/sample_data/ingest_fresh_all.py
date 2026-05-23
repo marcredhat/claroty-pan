@@ -429,11 +429,30 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=None,
                     help="Random seed (default: time-based, so each run "
                          "produces different events).")
+    ap.add_argument("--config", type=Path, default=None,
+                    help="Path to SDL config.json. Defaults to the SDLClient "
+                         "built-in path (~/windsurf/shared/sentinelone-sdl-"
+                         "api/config.json). Can also be set via the "
+                         "SDL_CONFIG_PATH env var. Individual settings can "
+                         "still be overridden via SDL_BASE_URL, "
+                         "SDL_LOG_WRITE_KEY, etc.")
     args = ap.parse_args()
 
     random.seed(args.seed if args.seed is not None else int(time.time()))
 
-    client = SDLClient()
+    config_path = args.config or (
+        Path(os.environ["SDL_CONFIG_PATH"]) if os.environ.get("SDL_CONFIG_PATH")
+        else None
+    )
+    if config_path is not None:
+        config_path = config_path.expanduser().resolve()
+        if not config_path.is_file():
+            print(f"ERROR: config file not found: {config_path}", file=sys.stderr)
+            return 2
+        print(f"Config:       {config_path}")
+        client = SDLClient(config_path=config_path)
+    else:
+        client = SDLClient()
     print(f"Connected to: {client.base_url}")
     now = datetime.now(timezone.utc)
     print(f"Now (UTC):    {now.isoformat()}")
