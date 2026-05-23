@@ -194,7 +194,7 @@ def build_body(rule: dict) -> dict:
             "scheduledParams": {
                 "query":                 rule["query"],
                 "lookbackWindowMinutes": 1440,    # 24h
-                "runIntervalMinutes":    60,      # hourly
+                "runIntervalMinutes":    15,      # every 15 min (min for 24h lookback)
                 "threshold":             {"value": 0, "operator": "Greater"},
             },
             "coolOffSettings": {"renotifyMinutes": 60},
