@@ -8,5 +8,17 @@
   "console_api_token": "REPLACE_WITH_CONSOLE_API_TOKEN",
   "s1_scope": "",
   "verify_tls": true,
-  "timeout_seconds": 30
+  "timeout_seconds": 30,
+  "otel": {
+    "_comment": "Used only by ingest_fresh_otel.py. Sends Nozomi + Claroty data as OTLP/gRPC logs via grpcurl.",
+    "endpoint": "your-tenant.observo.ai:443",
+    "headers": {
+      "authorization": "Bearer REPLACE_WITH_OTEL_TOKEN"
+    },
+    "service_name": "claroty-pan-otel",
+    "plaintext": false,
+    "insecure": false,
+    "proto_import_path": "/tmp/otlp",
+    "batch_size": 100
+  }
 }
