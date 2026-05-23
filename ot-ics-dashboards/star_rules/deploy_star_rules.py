@@ -21,6 +21,7 @@ name already exists, it's updated in place (idempotent).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -31,9 +32,17 @@ sys.path.insert(0, str(SKILL / "scripts"))
 from s1_client import S1Client  # type: ignore
 
 
-# Scope: user's site (Marc Chisinevski).
-SITE_ID = "REDACTED_SITE_ID"
-ACCOUNT_ID = "REDACTED_ACCOUNT_ID"
+# Scope: read from environment so tenant-specific IDs stay out of the repo.
+#   export S1_SITE_ID=...
+#   export S1_ACCOUNT_ID=...
+SITE_ID    = os.environ.get("S1_SITE_ID", "")
+ACCOUNT_ID = os.environ.get("S1_ACCOUNT_ID", "")
+
+if not SITE_ID:
+    raise SystemExit(
+        "ERROR: S1_SITE_ID env var is required. "
+        "Export it with: export S1_SITE_ID=<your-site-id>"
+    )
 
 
 # ----------------------------------------------------------------------------

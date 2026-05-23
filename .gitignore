@@ -1,0 +1,60 @@
+# --- Secrets & local config ---------------------------------------------
+# Real configs (templates ending in .example are OK).
+config.json
+*/config.json
+**/config.json
+!config.json.example
+!**/config.json.example
+
+# Generic env / secrets
+.env
+.env.*
+*.env
+secrets/
+secrets.*
+*.secrets
+
+# Private keys, certs
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# Tokens / API key dumps
+*.token
+api_key*
+*_api_key*
+bearer.txt
+
+# --- Python -------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- IDE / OS -----------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Build / dist -------------------------------------------------------
+build/
+dist/
+*.tar.gz
+*.zip
