@@ -213,26 +213,50 @@ def _noz(ts: datetime, asset, **kw) -> dict:
 
 
 def gen_claroty(now: datetime, window_min: int) -> List[dict]:
-    """Last `window_min` of Claroty telemetry: inventory snapshots, SRA, vulns."""
+    """Last `window_min` of Claroty telemetry: inventory snapshots, SRA, vulns.
+
+    NOTE: The dashboard panel "Claroty assets in inventory" filters on
+    ``serverHost = 'claroty-inventory' AND ip = *``, and the time series
+    "Stage 1+2 - Claroty inventory ingest over time" groups by
+    ``claroty_site``. Both require fields to be flat top-level attributes
+    (`ip`, `claroty_site`), not buried in nested `message`. We emit them
+    that way here."""
     events: List[dict] = []
     import json as _json
+
+    # zone -> Claroty "site" name (matches dashboard $plant parameter).
+    ZONE_TO_SITE = {
+        "BLAST_FURNACE": "PLANT-A",
+        "SAFETY":        "PLANT-A",
+        "HMI":           "PLANT-A",
+        "DCS":           "PLANT-A",
+        "DMZ":           "PLANT-B",
+    }
 
     # 1) Inventory snapshot (one per asset)
     for name, ip, zone, sil, crit in CLAROTY_ASSETS:
         ts = jitter(now, window_min * 60)
         risk = random.randint(40, 95)
+        site = ZONE_TO_SITE.get(zone, "PLANT-A")
         payload = {
-            "dataset":      "claroty",
-            "timestamp":    ts.isoformat().replace("+00:00", "Z"),
-            "vendor":       "Claroty",
-            "product":      "xDome",
-            "event_type":   "INVENTORY_SNAPSHOT",
-            "asset_name":   name,
-            "asset_ip":     ip,
-            "zone":         zone,
-            "sil_level":    sil,
-            "criticality":  crit,
-            "risk_score":   risk,
+            "dataset":            "claroty",
+            "timestamp":          ts.isoformat().replace("+00:00", "Z"),
+            "vendor":             "Claroty",
+            "product":            "xDome",
+            "event_type":         "INVENTORY_SNAPSHOT",
+            "asset_name":         name,
+            "asset_ip":           ip,
+            "zone":               zone,
+            "sil_level":          sil,
+            "criticality":        crit,
+            "risk_score":         risk,
+            # ---- fields required by claroty-pan-pipeline dashboard ----
+            "ip":                 ip,           # top-level for `ip = *` filter
+            "claroty_site":       site,         # group-by + $plant filter
+            "claroty_hostname":   name,
+            "claroty_criticality":crit,
+            "claroty_risk":       risk,
+            "claroty_status":     "ACTIVE",
         }
         events.append({"ts": ns(ts), "sev": 2,
                        "attrs": {**payload, "message": _json.dumps(payload),
@@ -244,6 +268,7 @@ def gen_claroty(now: datetime, window_min: int) -> List[dict]:
         ts = jitter(now, window_min * 60)
         dur = random.randint(60, 1800)
         u = random.choice(SRA_USERS)
+        site = ZONE_TO_SITE.get(a[2], "PLANT-A")
         payload = {
             "dataset":         "claroty",
             "timestamp":       ts.isoformat().replace("+00:00", "Z"),
@@ -257,6 +282,13 @@ def gen_claroty(now: datetime, window_min: int) -> List[dict]:
             "sra_session_id":  f"SRA-{random.randint(100000, 999999)}",
             "sra_user":        u,
             "sra_duration_sec": dur,
+            # ---- claroty_* enrichment + ip so SRA rows also appear in the
+            #      Stage 1+2 time-series panel (group-by claroty_site).
+            "ip":               a[1],
+            "claroty_site":     site,
+            "claroty_hostname": a[0],
+            "claroty_criticality": a[4],
+            "claroty_status":   "ACTIVE",
         }
         events.append({"ts": ns(ts), "sev": 3,
                        "attrs": {**payload, "message": _json.dumps(payload),
@@ -268,6 +300,7 @@ def gen_claroty(now: datetime, window_min: int) -> List[dict]:
         ts = jitter(now, window_min * 60)
         dur = random.randint(3700, 14400)   # >1h up to 4h
         u = random.choice(SRA_USERS)
+        site = ZONE_TO_SITE.get(a[2], "PLANT-A")
         payload = {
             "dataset":         "claroty",
             "timestamp":       ts.isoformat().replace("+00:00", "Z"),
@@ -281,6 +314,11 @@ def gen_claroty(now: datetime, window_min: int) -> List[dict]:
             "sra_session_id":  f"SRA-{random.randint(100000, 999999)}",
             "sra_user":        u,
             "sra_duration_sec": dur,
+            "ip":               a[1],
+            "claroty_site":     site,
+            "claroty_hostname": a[0],
+            "claroty_criticality": a[4],
+            "claroty_status":   "ACTIVE",
         }
         events.append({"ts": ns(ts), "sev": 5,
                        "attrs": {**payload, "message": _json.dumps(payload),
@@ -291,6 +329,7 @@ def gen_claroty(now: datetime, window_min: int) -> List[dict]:
         a = random.choice(crown_jewels_sil3)
         cve, desc, cvss = random.choice(CRITICAL_CVES)
         ts = jitter(now, window_min * 60)
+        site = ZONE_TO_SITE.get(a[2], "PLANT-A")
         payload = {
             "dataset":       "claroty",
             "timestamp":     ts.isoformat().replace("+00:00", "Z"),
@@ -305,6 +344,11 @@ def gen_claroty(now: datetime, window_min: int) -> List[dict]:
             "cve_desc":      desc,
             "cvss":          cvss,
             "vuln_severity": "CRITICAL",
+            "ip":               a[1],
+            "claroty_site":     site,
+            "claroty_hostname": a[0],
+            "claroty_criticality": a[4],
+            "claroty_status":   "ACTIVE",
         }
         events.append({"ts": ns(ts), "sev": 6,
                        "attrs": {**payload, "message": _json.dumps(payload),
@@ -313,18 +357,38 @@ def gen_claroty(now: datetime, window_min: int) -> List[dict]:
 
 
 def gen_pan_claroty(now: datetime, window_min: int) -> List[dict]:
-    """PAN firewall events carrying the 5 claroty_*_flag values."""
+    """PAN firewall events carrying the 5 claroty_*_flag values.
+
+    Emits the full set of claroty_* enrichment fields that the
+    "Stage 4/5 Drift events ..." panels group by:
+      claroty_site, claroty_criticality, claroty_risk, claroty_status,
+      claroty_hostname, claroty_expected_edl, src_external_dynamic_list,
+      scenario, src.ip.address.
+    """
     scenarios = [
-        ("claroty_edl_drift_flag",          3, "plc-bf-tap",  "BLAST_FURNACE"),
-        ("claroty_decommissioned_active_flag", 2, "hmi-decom",   "BLAST_FURNACE"),
-        ("claroty_dag_reclassified_flag",   2, "sis-safety",  "SAFETY"),
-        ("claroty_highrisk_offzone_flag",   4, "plc-bf-burner", "BLAST_FURNACE"),
-        ("claroty_unmanaged_cross_zone_flag", 3, "unknown-host", "GUEST_WIFI"),
+        # (flag,                                count, hostname_prefix, zone,            site)
+        ("claroty_edl_drift_flag",                3, "plc-bf-tap",      "BLAST_FURNACE", "PLANT-A"),
+        ("claroty_decommissioned_active_flag",   2, "hmi-decom",       "BLAST_FURNACE", "PLANT-A"),
+        ("claroty_dag_reclassified_flag",         2, "sis-bf-safety",   "SAFETY",        "PLANT-A"),
+        ("claroty_highrisk_offzone_flag",         4, "plc-bf-burner",   "BLAST_FURNACE", "PLANT-A"),
+        ("claroty_unmanaged_cross_zone_flag",     3, "unknown-host",    "GUEST_WIFI",    "PLANT-B"),
     ]
     events: List[dict] = []
-    for flag, count, prefix, zone in scenarios:
+    for flag, count, prefix, zone, site in scenarios:
+        scenario_name = flag.replace("claroty_", "").replace("_flag", "")
         for i in range(count):
             ts = jitter(now, window_min * 60)
+            hostname    = f"{prefix}-{(i % 3) + 1:02d}"
+            src_ip      = f"192.0.2.{60 + i}"
+            criticality = "CROWN_JEWEL" if zone in ("BLAST_FURNACE", "SAFETY") else "HIGH"
+            risk        = random.randint(60, 98)
+            status      = ("DECOMMISSIONED"
+                           if flag == "claroty_decommissioned_active_flag"
+                           else "ACTIVE")
+            expected_edl = f"edl-{zone.lower()}-approved"
+            observed_edl = (expected_edl
+                            if flag != "claroty_edl_drift_flag"
+                            else f"edl-{zone.lower()}-unapproved")
             attrs = {
                 "dataSource": {
                     "name":    "Palo Alto Networks Firewall",
@@ -336,13 +400,80 @@ def gen_pan_claroty(now: datetime, window_min: int) -> List[dict]:
                 "product":             "Firewall",
                 "action":              "deny" if i % 2 else "allow",
                 "log_type":            "TRAFFIC",
-                "rule_name":           f"ot-policy-{flag.replace('claroty_','').replace('_flag','')}",
+                "rule_name":           f"ot-policy-{scenario_name}",
+                # ---- the flag the dashboard / STAR rules pivot on ----
                 flag:                  "1",
-                "claroty_asset_id":    f"AST-{flag[:4].upper()}-{i:04d}",
-                "claroty_asset_name":  f"{prefix}-{(i % 3) + 1}",
-                "claroty_zone":        zone,
-                "src_ip":              f"192.0.2.{60 + i}",
-                "dst_ip":              f"203.0.113.{10 + i}",
+                # ---- canonical claroty_* enrichment expected by Stage 4/5 panels
+                "claroty_asset_id":         f"AST-{scenario_name[:4].upper()}-{i:04d}",
+                "claroty_asset_name":       hostname,
+                "claroty_hostname":         hostname,
+                "claroty_zone":             zone,
+                "claroty_site":             site,
+                "claroty_criticality":      criticality,
+                "claroty_risk":             risk,
+                "claroty_status":           status,
+                "claroty_expected_edl":     expected_edl,
+                # ---- src/dst plus the dotted form the Stage 4 panel uses
+                "src_ip":                   src_ip,
+                "src.ip.address":           src_ip,
+                "src_external_dynamic_list":observed_edl,
+                "dst_ip":                   f"203.0.113.{10 + i}",
+                # ---- scenario tag for the "Stage 5 - Recent Claroty STAR drift events" panel
+                "scenario":                 scenario_name,
+            }
+            events.append({"ts": ns(ts), "sev": 4, "attrs": attrs})
+    return events
+
+
+def gen_pan_library_trigger(now: datetime, window_min: int) -> List[dict]:
+    """PANW Library trigger events (firewall library rule hits) enriched
+    with Claroty context. Routed to serverHost ``pan-library-trigger`` so
+    the dashboard panel "PANW Library triggers with Claroty enrichment"
+    can group by ``library_rule_target``."""
+    library_rules = [
+        ("ot-block-internet-egress",       "plc-bf-tap-02",    "192.0.2.51", "BLAST_FURNACE", "PLANT-A", "CROWN_JEWEL"),
+        ("ot-block-rdp-from-corp",         "hmi-bf-control-01","192.0.2.30", "HMI",           "PLANT-A", "HIGH"),
+        ("ot-allow-engineering-station",   "ews-bf-eng-01",    "192.0.2.31", "DMZ",           "PLANT-B", "MEDIUM"),
+        ("ot-deny-unmanaged-asset",        "unknown-host-001", "192.0.2.99", "GUEST_WIFI",    "PLANT-B", "HIGH"),
+        ("ot-isolate-decommissioned",      "hmi-bf-decom-01",  "192.0.2.99", "BLAST_FURNACE", "PLANT-A", "CRITICAL"),
+    ]
+    events: List[dict] = []
+    for rule, hostname, ip, zone, site, crit in library_rules:
+        for i in range(random.randint(2, 4)):
+            ts = jitter(now, window_min * 60)
+            in_inventory = "true" if not hostname.startswith("unknown-host") else "false"
+            context = ("crown-jewel-engineering"
+                       if crit == "CROWN_JEWEL"
+                       else "managed-asset"
+                       if in_inventory == "true"
+                       else "unmanaged-shadow-asset")
+            attrs = {
+                "dataSource": {
+                    "name":    "Palo Alto Networks Firewall",
+                    "vendor":  "Palo Alto Networks",
+                    "product": "PA-Series Firewall",
+                },
+                "dataSource.name":      "Palo Alto Networks Firewall",
+                "vendor":               "Palo Alto Networks",
+                "product":              "Firewall",
+                "log_type":             "LIBRARY-TRIGGER",
+                "rule_name":            rule,
+                # ---- library rule fields ----
+                "library_rule":         rule,
+                "library_rule_target":  hostname,
+                "action":               "deny" if rule.startswith("ot-block") or rule.startswith("ot-deny") else "allow",
+                # ---- Claroty enrichment expected by the Stage 5 panel ----
+                "claroty_hostname":     hostname,
+                "claroty_site":         site,
+                "claroty_criticality":  crit,
+                "claroty_risk":         random.randint(50, 95),
+                "claroty_status":       "DECOMMISSIONED" if "decom" in hostname else "ACTIVE",
+                "claroty_in_inventory": in_inventory,
+                "claroty_context":      context,
+                # ---- src/dst ----
+                "src_ip":               ip,
+                "src.ip.address":       ip,
+                "dst_ip":               f"203.0.113.{random.randint(2, 250)}",
             }
             events.append({"ts": ns(ts), "sev": 4, "attrs": attrs})
     return events
@@ -403,18 +534,31 @@ def gen_pan_correlation(now: datetime, window_min: int) -> List[dict]:
 # ----------------------------------------------------------------------------
 # Ingest
 # ----------------------------------------------------------------------------
-def ingest(client: SDLClient, events: List[dict], dataset: str) -> None:
+# IMPORTANT: dashboards/claroty-pan-pipeline.json filters on these exact
+# serverHost names. Do not change them without also updating the dashboard.
+SERVERHOSTS = {
+    "nozomi":               "nozomi-guardian",
+    "claroty":              "claroty-inventory",     # "Claroty assets in inventory" panel
+    "panw_firewall":        "pan-claroty-enriched",  # "Drift events ..." panels
+    "panw_correlation":     "pan-correlation",       # "PAN events (24h)" counter
+    "panw_library_trigger": "pan-library-trigger",   # "PANW Library triggers ..." panel
+}
+
+
+def ingest(client: SDLClient, events: List[dict], dataset: str,
+           server_host: str | None = None) -> None:
     if not events:
         print(f"[SKIP] {dataset}: no events")
         return
     session = SDLClient.new_session_id()
+    sh = server_host or SERVERHOSTS.get(dataset, f"ot-ics-fresh-{dataset}")
     session_info = {
-        "serverHost": f"ot-ics-fresh-{dataset}",
+        "serverHost": sh,
         "parser":     dataset,
         "dataset":    dataset,
         "source":     "ot-ics-dashboards/sample_data/ingest_fresh_all",
     }
-    print(f"[*] {dataset}: ingesting {len(events)} events")
+    print(f"[*] {dataset} -> serverHost='{sh}': ingesting {len(events)} events")
     for i, chunk in enumerate(chunked(events, 500), 1):
         res = client.add_events(session=session, events=chunk,
                                 session_info=session_info)
@@ -462,16 +606,21 @@ def main() -> int:
     cla_events   = gen_claroty(now, args.minutes)
     pan_claroty  = gen_pan_claroty(now, args.minutes)
     pan_corr     = gen_pan_correlation(now, args.minutes)
+    pan_libtrig  = gen_pan_library_trigger(now, args.minutes)
 
     print(f"Generated:")
-    print(f"  nozomi:                {len(noz_events):>5}")
-    print(f"  claroty:               {len(cla_events):>5}")
-    print(f"  panw_firewall (flags): {len(pan_claroty):>5}")
-    print(f"  panw_firewall (corr):  {len(pan_corr):>5}\n")
+    print(f"  nozomi:                  {len(noz_events):>5}")
+    print(f"  claroty (inventory):     {len(cla_events):>5}")
+    print(f"  panw_firewall (flags):   {len(pan_claroty):>5}")
+    print(f"  panw correlation:        {len(pan_corr):>5}")
+    print(f"  panw library trigger:    {len(pan_libtrig):>5}\n")
 
-    ingest(client, noz_events,                 "nozomi")
-    ingest(client, cla_events,                 "claroty")
-    ingest(client, pan_claroty + pan_corr,     "panw_firewall")
+    # Route each stream to the serverHost the dashboard queries.
+    ingest(client, noz_events,    "nozomi")
+    ingest(client, cla_events,    "claroty")
+    ingest(client, pan_claroty,   "panw_firewall")
+    ingest(client, pan_corr,      "panw_correlation")
+    ingest(client, pan_libtrig,   "panw_library_trigger")
 
     print("\nDone. Refresh the dashboards with a 'last 1 hour' time window:")
     print("  https://<your-xdr-host>/#/dashboards")
